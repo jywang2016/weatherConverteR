@@ -1,0 +1,205 @@
+---
+title: "Using eplusr to insert your weather data in EPW"
+author: "jywang_2016"
+date: "2018年3月11日"
+output:
+  prettydoc::html_pretty:
+    theme: cayman
+    highlight: github
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#背景
+在进行建筑仿真的科研与项目中，经常会遇到需要使用实际的天气数据来进行建筑仿真，通过观察仿真能耗与建筑实际能耗的误差，来验证与校准模型的问题。以[**EnergyPlus**](https://www.energyplus.net/)为例，天气文件`weather.EPW`可以通过一些文本编辑软件，如`Notepad++`来进行读取，也可以通过**EnergyPlus**提供的`Weather.exe`来进行`CSV`格式的输出，并实现后续修改。后续的修改往往通过手动执行，一来是我们的天气数据不全，要调整格式并且替换耗时较长，此外，当仿真的时间跨度较大时，手动修改的工作量较大。当然，还有一个问题是，epw中提供的部分天气参数之间是互相关联的。比如，干球温度，相对湿度和露点温度，在大气压一定的情况下，前面3个变量都可以通过其他2个计算得到。如果我们的天气参数没有露点温度，而仅仅采用的是EPW原有的露点温度，那么计算的结果可能会出现问题。
+
+最近在研究中遇到了上述天气替换的问题，我自己的天气数据是每天一个excel文件，不得不选择自己熟悉的R进行批量处理。而后，又不想手动替换，况且还要计算露点温度，只好编写代码来实现这么个过程。
+
+思路如下：1)数据批量读入，并修改时间格式(EPW中是1:00-24:00，而我们的时间往往是0:00-23:00);2)结合[Hongyuan师兄](https://github.com/hongyuanjia)编写的[eplusr](https://github.com/hongyuanjia/eplusr)中的epw解析与写出函数，和CoolProp提供的物性库，进行epw的读取，已有天气数据中露点温度的计算，并将已有的天气数据插入并写出到epw中；3)使用新的epw结合E+中的案例文件进行测试，看是否成功运行。上述过程都在R中进行，并且稍作改动即可运用到批量的数据读取与天气文件的修改中。
+
+> 我自己是经常在手动替换，并不了解是否有别的自动化手段。如果没有提及，还请大家不要见怪，并不吝指出，我也可以多学习。
+
+# 代码
+
+## 加载包
+
+```{r}
+library(readxl)
+library(dplyr)
+library(lubridate)
+```
+后续的epw文件的读取和写出中，还使用了`readr`和`stringr`包，如果函数执行出错，大家可以安装后再尝试。
+
+## 数据批量读取
+
+```{r}
+# read data path
+path <- "./data/"
+(files_name <- list.files(path, pattern = "*xlsx$", full.names = TRUE))
+```
+
+在`data`文件夹底下有作为案例演示的3个`excel`天气文件。真实数据更为量大复杂，此处只作示例，因此作出简化。
+
+```{r}
+# deal data format by using daily_weather.func
+source("daily_weather_noDateDeal.R",encoding = "UTF-8")
+
+raw_weather <- daily_weather_noDateDeal(files_name[1])
+
+for (i in 2:length(files_name))
+{
+  temp <- daily_weather_noDateDeal(files_name[i])
+  if (nrow(temp) != 288)
+  {
+    warnings("Data missing")
+    break
+  }
+  raw_weather <- rbind(raw_weather,temp)
+}
+
+write.csv(raw_weather,"myweather.csv",row.names = F)
+```
+
+使用`daily_weather_noDateDeal()`函数读取了该路径下的天气数据，并且将之合并，输出为`CSV`文件，用作下一步的分析。
+
+##露点温度计算
+
+```{r}
+rm(list = ls())
+myweather <- read.csv("myweather.csv")
+
+# Add the Dew point Temp
+# 1) call CoolProp.dll
+# 2) use HAPropsSI() calculate the DewPointTemp
+
+#1)
+dyn.load(paste("CoolProp", .Platform$dynlib.ext, sep=""))
+library(methods) 
+source("CoolProp.R")
+cacheMetaData(1)
+
+#2)
+myweather$DewPoint <- 0 
+for (i in 1:nrow(myweather))
+{
+  myweather$DewPoint[i] <- HAPropsSI('D', 'T', myweather$DryBulb[i]+273.15, 'P', 101325, 'R', myweather$RelHum[i]/100)  
+}
+
+myweather <- myweather %>% 
+  mutate(DewPoint = round(DewPoint - 273.15,1))
+
+write.csv(myweather,"myweather_dewpTemp.csv",row.names = F)
+```
+
+这一步我们使用[**CoolProp**](https://github.com/CoolProp/CoolProp)提供的`HAPropsSI()`函数来进行空气的物性计算。由于物性计算一般都是使用的开氏温度，因此在摄氏度后面加上了273.15进行转换。
+
+> 大家不必按照CoolProp在github上的教程来安装CoolProp，此处的调用仅仅只是关乎dll文件，因此不安装CoolProp也可以。如果要实现更多的复杂功能，可能力不从心，大家可以参考CoolProp给出的[R调用教程](http://www.coolprop.org/coolprop/wrappers/R/index.html#r).
+
+## 数据替换
+
+```{r}
+rm(list = ls())
+myweather <- read.csv("myweather_dewpTemp.csv")
+```
+
+
+### epw的解析
+```{r}
+source("epw.R")
+#采用的是下载来的河南郑州的epw天气文件
+epw_csv <- read_epw("CHN_Henan.Zhengzhou.570830_CSWD.epw")
+```
+
+解析函数在`epw.R`文件中，此文件是`eplusr`早期版本中包含的函数，可惜的是`HongyuanJia`师兄目前发布的`eplusr`暂时取消了epw文件的解析功能。好在此前还有clone过该版本，因此单独将所需函数拿出来使用。
+
+### 数据格式调整与替换
+
+```{r}
+myweather <- myweather %>%
+  mutate(
+    year = unique(epw_csv$data$year),
+    month = month(Date),
+    day = day(Date),
+    hour = hour(Date),
+    minute = minute(Date)
+  ) 
+
+# tricks:the hours of epw ranges from 1:00 to 24:00
+# In most of our data, the hours of one day ranges from 0:00 to 23:00
+# Translation should be done to solve this problem
+
+if(0 %in% myweather$hour)
+{
+  temp_d_row <- which(myweather$hour == 0)
+  myweather[temp_d_row,"hour"] <- 24
+  myweather[temp_d_row,"day"] <- (myweather$Date[temp_d_row] %>% as.Date() -1) %>% day()
+  myweather[temp_d_row,"month"] <- (myweather$Date[temp_d_row] %>% as.Date() -1) %>% month()
+}
+
+myweather <- myweather[which(myweather$minute ==0),]
+
+# replace the typical weather with your weather data
+# 1) find the start time and end time of your weather
+# 2) copy the part of typical weather, which have the same start/end time with your data
+# 3) replace the responding variables in part_typical_weather with your data
+# 4) replace the part of raw typical weather with your modified part_typical_weather data
+nhour <- nrow(myweather) 
+start<-which(epw_csv$data$month == myweather$month[1] &
+               epw_csv$data$day == myweather$day[1] &
+               epw_csv$data$hour == myweather$hour[1])
+
+end<-which(epw_csv$data$month == myweather$month[nhour] &
+             epw_csv$data$day == myweather$day[nhour] &
+             epw_csv$data$hour == myweather$hour[nhour])
+
+epw_my_part <- epw_csv$data[start:end,] %>%
+  mutate(
+    dry_bulb = myweather$DryBulb,
+    dew_point = myweather$DewPoint,
+    rel_hum = myweather$RelHum
+  )
+
+epw_csv$data[start:end,] <- epw_my_part
+```
+
+### 经纬度替换
+
+解析出来的对象还包括有`Location`这一属性，同样地，我们也可以修改该属性。比如，我们可以使用焦作的经纬度来代替郑州的。
+```{r}
+# replace the Location
+epw_csv$location[,1] <- "jiaozuo" # city
+epw_csv$location[,5] <- 35.210     # latitude
+epw_csv$location[,6] <- 113.267    # longitute
+```
+
+经纬度查询的功能可以考虑使用R语言调用百度API实现，[RbaiduLBS](https://github.com/lijian13/RbaiduLBS)可以实现该功能。不过这个功能并不是我们所关注的重点，因此不表。同时，也可以使用百度的坐标拾取系统查询。
+
+### epw写出
+
+```{r}
+write_epw(epw_csv,"./test/temp.epw")
+```
+
+写出为`temp.epw`，并放入`test`子文件夹，该文件夹底下有`EnergyPlus`提供的案例文件。
+
+## 测试
+
+```{r warning=FALSE}
+rm(list = ls())
+library(eplusr)
+
+model <- eplus_model$new(path = "./test/5Zone_Transformer.idf")
+
+model$run(eplus_home = "D:/EnergyPlusV8-8-0" ,period = ~"annual", weather = "./test/temp.epw" ,echo = TRUE)
+```
+
+从输出的界面来看，`EnergyPlus`的运行是没有问题的，后续还需深入探究。
+
+## 信息
+
+```{r}
+sessionInfo()
+```
+

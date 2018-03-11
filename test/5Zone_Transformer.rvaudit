@@ -1,0 +1,16 @@
+ ReadVarsESO
+ processing:E:\Github\WeatherConvertR\weatherConvertR\test\5Zone_Transformer.rvi
+ input file:E:\Github\WeatherConvertR\weatherConvertR\test\5Zone_Transformer.eso
+ output file:E:\Github\WeatherConvertR\weatherConvertR\test\5Zone_Transformer.csv
+ getting all vars from:E:\Github\WeatherConvertR\weatherConvertR\test\5Zone_Transformer.eso
+  number variables requested for output=          13
+ ReadVars Run Time=00hr 00min  1.95sec
+ ReadVarsESO program completed successfully.
+ ReadVarsESO
+ processing:E:\Github\WeatherConvertR\weatherConvertR\test\5Zone_Transformer.mvi
+ input file:E:\Github\WeatherConvertR\weatherConvertR\test\5Zone_Transformer.mtr
+ output file:E:\Github\WeatherConvertR\weatherConvertR\test\5Zone_TransformerMeter.csv
+ getting all vars from:E:\Github\WeatherConvertR\weatherConvertR\test\5Zone_Transformer.mtr
+  number variables requested for output=           7
+ ReadVars Run Time=00hr 00min  1.22sec
+ ReadVarsESO program completed successfully.
