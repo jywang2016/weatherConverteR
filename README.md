@@ -1,5 +1,5 @@
 # weatherConverteR
-using eplusr and coolprop to inset your weather data in EPW
+using eplusr and coolprop to insert your weather data in EPW
 
 The `main.R` call `read_epw()` function to parse the epw files provided by [EnergyPlus](https://energyplus.net/) and provide a way [call CoolProp.dll](https://github.com/CoolProp/CoolProp) to calculate the dew point temperature. Furthermore, you can organize your weather data in R. And `write_epw()`function allows you replace the epw files (including Location and Weather) with your own organized weather data.
 
